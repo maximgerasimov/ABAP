@@ -46,3 +46,4 @@ IF sy-subrc = 0.
 
     READ TABLE lt_result_objec INTO ls_result_objec
                                WITH KEY otype = 'CP'.
+*this is test
