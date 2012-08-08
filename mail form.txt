@@ -1,0 +1,434 @@
+CONSTANTS:
+      lc_contact_fct  TYPE string VALUE '00000015',
+      lc_factory_fct  TYPE string VALUE 'ZVZP',
+      lc_customer_fct TYPE string VALUE '00000001',
+      lc_manager_fct  TYPE string VALUE 'ZSTD2',
+      lc_appt_type    TYPE string VALUE 'ZTSR_BEGIN',
+      lc_tid          TYPE tdid VALUE 'ZFNC',
+      lc_exec_dir     TYPE i VALUE 1,
+      lc_tech_dir     TYPE i VALUE 2,
+      lc_qual_dir     TYPE i VALUE 3.
+
+DATA: lt_partner      TYPE crmt_partner_external_wrkt,
+      lt_contact      TYPE crmt_partner_external_wrkt,
+      lv_partner      TYPE bu_partner,
+      ls_centraldataorganization  LIKE bapibus1006_central_organ,
+      ls_centraldata  LIKE bapibus1006_central_person,
+      lt_appointment  TYPE crmt_appointment_wrkt,
+      lt_service_h    TYPE crmt_service_h_wrkt,
+      lt_header_guid  TYPE crmt_object_guid_tab,
+      lt_orderadm_i   TYPE crmt_orderadm_i_wrkt,
+      lt_customer_i   TYPE crmt_customer_i_wrkt,
+      lt_orgman       TYPE crmt_orgman_wrkt,
+      lv_item_guid    TYPE crmt_object_guid,
+      lt_result_objec TYPE TABLE OF objec,
+      lv_addrnumber   TYPE ad_addrnum,
+      lv_initial_f(1) TYPE c,
+      lv_initial_m(1) TYPE c,
+      lv_sales_group  TYPE hrobjid,
+      lv_dummy(1)     TYPE c,
+      ls_partner      LIKE LINE OF lt_partner,
+      lv_head_name_last TYPE string,
+      lv_object_guid  TYPE crmt_object_guid,
+      lv_tdname       TYPE tdobname,
+      lt_text         TYPE tttext,
+      ls_text         LIKE LINE OF lt_text,
+
+      lv_factory_bp   TYPE bu_partner,
+      lv_boss_bp      TYPE pd_objid_r,
+      lt_result_tab   LIKE TABLE OF swhactor,
+      ls_result_tab   LIKE LINE OF lt_result_tab,
+      ls_result_objec LIKE LINE OF lt_result_objec.
+
+*BREAK: RECHEMBEYMM.
+*
+*BREAK-POINT 'Example-1'.
+
+FIELD-SYMBOLS:
+      <ls_partner>     LIKE LINE OF lt_partner,
+      <ls_orderadm_i>  LIKE LINE OF lt_orderadm_i,
+      <ls_appointment> LIKE LINE OF lt_appointment,
+      <ls_service_h>   LIKE LINE OF lt_service_h,
+      <ls_customer_i>  LIKE LINE OF lt_customer_i,
+      <ls_orgman>      LIKE LINE OF lt_orgman,
+      <ls_result_tab>  LIKE LINE OF lt_result_tab.
+
+* Чтение данных заказа
+lv_object_guid = orderadm_h-guid.
+
+APPEND lv_object_guid TO lt_header_guid.
+CALL FUNCTION 'CRM_ORDER_READ'
+  EXPORTING
+    it_header_guid = lt_header_guid
+  IMPORTING
+    et_partner     = lt_partner
+    et_orderadm_i  = lt_orderadm_i
+    et_appointment = lt_appointment
+    et_service_h   = lt_service_h
+    et_customer_i  = lt_customer_i
+    et_orgman      = lt_orgman.
+
+* [1] Завод-производитель
+READ TABLE lt_partner INTO ls_partner
+                      WITH KEY partner_fct = lc_factory_fct.
+IF sy-subrc = 0.
+  lv_factory_bp = ls_partner-partner_no.
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+    EXPORTING
+      input  = lv_factory_bp
+    IMPORTING
+      output = lv_factory_bp.
+
+  SELECT zzfull_name
+    FROM but000
+    INTO manufacture_name
+    WHERE partner = lv_factory_bp.
+  ENDSELECT.
+ENDIF.
+
+* [2.2] ФИО управляющего директора завода
+SELECT SINGLE partner2
+  FROM but051
+  INTO lv_partner
+  WHERE partner1 = lv_factory_bp AND
+        pavip = lc_exec_dir.
+
+IF sy-subrc = 0.
+  CALL FUNCTION 'BAPI_BUPA_CENTRAL_GETDETAIL'
+    EXPORTING
+      businesspartner   = lv_partner
+    IMPORTING
+      centraldataperson = ls_centraldata.
+
+  CONCATENATE ls_centraldata-firstname(1) '.'
+              ls_centraldata-middlename(1) '.'
+              INTO exec_name.
+  CONCATENATE exec_name
+              ls_centraldata-lastname
+              INTO exec_name SEPARATED BY space.
+
+* [5] Имя и отчество управляющего директора завода
+  CONCATENATE ls_centraldata-firstname
+              ls_centraldata-middlename
+              INTO exec_io SEPARATED BY space.
+
+* [2.2] Должность управляющего директора завода
+  lv_tdname = lv_partner.
+
+  CALL FUNCTION 'READ_TEXT'
+    EXPORTING
+      id                      = lc_tid
+      language                = sy-langu
+      name                    = lv_tdname
+      object                  = 'BUT000'
+    TABLES
+      lines                   = lt_text
+    EXCEPTIONS
+      id                      = 1
+      language                = 2
+      name                    = 3
+      not_found               = 4
+      object                  = 5
+      reference_check         = 6
+      wrong_access_to_archive = 7
+      OTHERS                  = 8.
+  IF sy-subrc <> 0.
+    exec_position = ''.
+  ELSE.
+    READ TABLE lt_text INTO ls_text INDEX 1.
+    IF sy-subrc = 0.
+      exec_position = ls_text-tdline.
+    ENDIF.
+  ENDIF.
+ENDIF.
+
+* [3.2] ФИО технического директора/главного инженера
+SELECT SINGLE partner2
+  FROM but051
+  INTO lv_partner
+  WHERE partner1 = lv_factory_bp AND
+        pavip = lc_tech_dir.
+
+IF sy-subrc = 0.
+  CALL FUNCTION 'BAPI_BUPA_CENTRAL_GETDETAIL'
+    EXPORTING
+      businesspartner   = lv_partner
+    IMPORTING
+      centraldataperson = ls_centraldata.
+
+  CONCATENATE ls_centraldata-firstname(1) '.'
+              ls_centraldata-middlename(1) '.'
+              INTO tech_name.
+  CONCATENATE tech_name
+              ls_centraldata-lastname
+              INTO tech_name SEPARATED BY space.
+
+* [3.1] Должность технического директора/главного инженера
+  lv_tdname = lv_partner.
+  CALL FUNCTION 'READ_TEXT'
+    EXPORTING
+      id                      = lc_tid
+      language                = sy-langu
+      name                    = lv_tdname
+      object                  = 'BUT000'
+    TABLES
+      lines                   = lt_text
+    EXCEPTIONS
+      id                      = 1
+      language                = 2
+      name                    = 3
+      not_found               = 4
+      object                  = 5
+      reference_check         = 6
+      wrong_access_to_archive = 7
+      OTHERS                  = 8.
+  IF sy-subrc <> 0.
+    tech_position = ''.
+  ELSE.
+    READ TABLE lt_text INTO ls_text INDEX 1.
+    IF sy-subrc = 0.
+      tech_position = ls_text-tdline.
+    ENDIF.
+  ENDIF.
+ENDIF.
+
+* [4.2] ФИО директора по качеству/главного спец. тех.отдела
+SELECT SINGLE partner2
+  FROM but051
+  INTO lv_partner
+  WHERE partner1 = lv_factory_bp AND
+        pavip = lc_qual_dir.
+
+IF sy-subrc = 0.
+  CALL FUNCTION 'BAPI_BUPA_CENTRAL_GETDETAIL'
+    EXPORTING
+      businesspartner   = lv_partner
+    IMPORTING
+      centraldataperson = ls_centraldata.
+
+  CONCATENATE ls_centraldata-firstname(1) '.'
+              ls_centraldata-middlename(1) '.'
+              INTO qual_name.
+  CONCATENATE qual_name
+              ls_centraldata-lastname
+              INTO qual_name SEPARATED BY space.
+
+* [4.1] Должность дир. по кач-ву/главного спец.тех.отдела
+  lv_tdname = lv_partner.
+  CALL FUNCTION 'READ_TEXT'
+    EXPORTING
+      id                      = lc_tid
+      language                = sy-langu
+      name                    = lv_tdname
+      object                  = 'BUT000'
+    TABLES
+      lines                   = lt_text
+    EXCEPTIONS
+      id                      = 1
+      language                = 2
+      name                    = 3
+      not_found               = 4
+      object                  = 5
+      reference_check         = 6
+      wrong_access_to_archive = 7
+      OTHERS                  = 8.
+  IF sy-subrc <> 0.
+    qual_position = ''.
+  ELSE.
+    READ TABLE lt_text INTO ls_text INDEX 1.
+    IF sy-subrc = 0.
+      qual_position = ls_text-tdline.
+    ENDIF.
+  ENDIF.
+ENDIF.
+
+* [6] Полное наименование заказчика
+READ TABLE lt_partner ASSIGNING <ls_partner>
+                      WITH KEY partner_fct = lc_customer_fct.
+IF sy-subrc = 0.
+  CALL FUNCTION 'BUPA_NUMBERS_GET'
+    EXPORTING
+      iv_partner_guid = <ls_partner>-bp_partner_guid
+    IMPORTING
+      ev_partner      = lv_partner.
+
+  SELECT SINGLE zzfull_name
+    FROM but000
+    INTO cust_full_name
+    WHERE partner = lv_partner.
+
+ENDIF.
+
+* [7] Номер уведомления
+notification_no = orderadm_h-object_id.
+
+* [8] Дата поступления уведомления
+READ TABLE lt_appointment ASSIGNING <ls_appointment>
+                          WITH KEY appt_type = lc_appt_type.
+IF sy-subrc = 0.
+  cl_abap_datfm=>conv_date_int_to_ext(
+                      EXPORTING
+                        im_datint = <ls_appointment>-date_from
+                      IMPORTING
+                        ex_datext = notification_date ).
+ENDIF.
+
+* [9] Вид уведомления
+READ TABLE lt_service_h ASSIGNING <ls_service_h>
+                        INDEX 1.
+IF sy-subrc = 0.
+  CASE <ls_service_h>-zznotice_type.
+    WHEN 1.
+      notification_type = 'по качеству'.
+    WHEN 2.
+      notification_type = 'по количеству'.
+    WHEN 3.
+      notification_type = 'обращение'.
+  ENDCASE.
+ENDIF.
+
+* [10] Наименование продукции
+READ TABLE lt_orderadm_i ASSIGNING <ls_orderadm_i>
+                         INDEX 1.
+IF sy-subrc = 0.
+  production_name = <ls_orderadm_i>-description.
+  lv_item_guid = <ls_orderadm_i>-guid.
+ENDIF.
+
+* [11] Наименование материала
+READ TABLE lt_customer_i ASSIGNING <ls_customer_i>
+                         WITH KEY guid = lv_item_guid.
+IF sy-subrc = 0.
+  material_name = <ls_customer_i>-zzfld000021.
+ENDIF.
+
+* [12] Подразделение сбыта
+READ TABLE lt_orgman ASSIGNING <ls_orgman> INDEX 1.
+IF sy-subrc = 0.
+  IF <ls_orgman>-sales_group IS NOT INITIAL.
+    SPLIT <ls_orgman>-sales_group AT space
+                                INTO: lv_dummy lv_sales_group.
+
+    CALL FUNCTION 'HRBAS_STRUCTURE_READ_OBJECT'
+      EXPORTING
+        hrbas_plvar = '01'
+        hrbas_otype = 'O'
+        hrbas_objid = lv_sales_group
+      IMPORTING
+        hrbas_stext = sales_group.
+    IF sy-subrc <> 0.
+    ENDIF.
+  ENDIF.
+ENDIF.
+
+* [13] ФИО руководителя
+READ TABLE lt_partner ASSIGNING <ls_partner>
+                      WITH KEY partner_fct = lc_manager_fct.
+IF sy-subrc = 0.
+  lv_partner = <ls_partner>-partner_no.
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+    EXPORTING
+      input  = lv_partner
+    IMPORTING
+      output = lv_partner.
+
+  CALL FUNCTION 'RH_STRUC_GET'
+    EXPORTING
+      act_otype       = 'BP'
+      act_objid       = lv_partner
+      act_wegid       = 'BP-CP-O'
+      authority_check = ''
+    TABLES
+      result_tab      = lt_result_tab
+    EXCEPTIONS
+      no_plvar_found  = 1
+      no_entry_found  = 2
+      OTHERS          = 3.
+  IF sy-subrc <> 0.
+  ENDIF.
+
+  READ TABLE lt_result_tab INTO ls_result_tab
+                             WITH KEY otype = 'O'.
+  IF sy-subrc = 0.
+    CLEAR lt_result_tab.
+
+    lv_boss_bp = ls_result_tab-objid.
+
+    CALL FUNCTION 'RH_STRUC_GET'
+      EXPORTING
+        act_otype      = 'O'
+        act_objid      = lv_boss_bp
+        act_wegid      = 'BOSSONLY'
+      TABLES
+        result_objec   = lt_result_objec
+      EXCEPTIONS
+        no_plvar_found = 1
+        no_entry_found = 2
+        OTHERS         = 3.
+    IF sy-subrc <> 0.
+    ENDIF.
+
+    READ TABLE lt_result_objec INTO ls_result_objec
+                               WITH KEY otype = 'CP'.
+    IF sy-subrc = 0.
+      head_name = ls_result_objec-stext.
+    ENDIF.
+  ENDIF.
+ENDIF.
+
+* [14] ФИО исполнителя
+READ TABLE lt_partner ASSIGNING <ls_partner>
+                      WITH KEY partner_fct = lc_manager_fct.
+IF sy-subrc = 0.
+  CALL FUNCTION 'BUPA_NUMBERS_GET'
+    EXPORTING
+      iv_partner_guid = <ls_partner>-bp_partner_guid
+    IMPORTING
+      ev_partner      = lv_partner.
+
+  CALL FUNCTION 'BAPI_BUPA_CENTRAL_GETDETAIL'
+    EXPORTING
+      businesspartner   = lv_partner
+    IMPORTING
+      centraldataperson = ls_centraldata.
+
+  manager_name = ls_centraldata-lastname.
+
+  IF ls_centraldata-firstname IS NOT INITIAL.
+    CONCATENATE manager_name
+                ls_centraldata-firstname(1)
+                INTO manager_name SEPARATED BY space.
+    CONCATENATE manager_name '.' INTO manager_name.
+
+  ENDIF.
+  IF ls_centraldata-middlename IS NOT INITIAL.
+    CONCATENATE manager_name
+          ls_centraldata-middlename(1) '.'
+          INTO manager_name.
+  ENDIF.
+ENDIF.
+
+* [15] внутренний номер телефона
+READ TABLE lt_partner ASSIGNING <ls_partner>
+                      WITH KEY partner_fct = lc_manager_fct.
+IF sy-subrc = 0.
+  lv_partner = <ls_partner>-partner_no.
+
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+    EXPORTING
+      input  = lv_partner
+    IMPORTING
+      output = lv_partner.
+
+  CALL FUNCTION 'BUPA_ADDRESSES_GET'
+    EXPORTING
+      iv_partner             = lv_partner
+    IMPORTING
+      ev_standard_addrnumber = lv_addrnumber.
+  IF sy-subrc = 0.
+    SELECT SINGLE tel_extens
+      FROM adr2
+      INTO tel_num
+      WHERE addrnumber = lv_addrnumber.
+  ENDIF.
+ENDIF.
